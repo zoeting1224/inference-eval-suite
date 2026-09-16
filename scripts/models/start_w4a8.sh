@@ -11,6 +11,9 @@ source /usr/local/Ascend/ascend-toolkit/set_env.sh
 source /usr/local/Ascend/cann-9.1.0/share/info/ascendnpu-ir/bin/set_env.sh
 source /usr/local/Ascend/nnal/atb/set_env.sh --cxx_abi="${ATB_CXX_ABI:-1}"
 
+LOG_DIR=/workspace/inference_eval_suite/runs/service_logs
+mkdir -p "$LOG_DIR"
+
 exec vllm serve /models/Qwen3.8-27B-W4A8-L28-35 \
   --served-model-name Qwen3.8-27B-W4A8-L28-35 \
   --tensor-parallel-size 2 \
@@ -19,5 +22,4 @@ exec vllm serve /models/Qwen3.8-27B-W4A8-L28-35 \
   --quantization ascend \
   --host 0.0.0.0 \
   --port 8000 \
-  > /workspace/logs/w4a8-vllm.log 2>&1
-
+  > "$LOG_DIR/w4a8-vllm.log" 2>&1
