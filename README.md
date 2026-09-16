@@ -6,6 +6,33 @@
 python3 inferbench.py <功能> [参数]
 ```
 
+这里的 `<功能>` 和 `[参数]` 是占位符，不要原样输入：
+
+- `<功能>`：紧跟在 `inferbench.py` 后面，替换为 `plan`、`doctor`、`search`、`perf`、`accuracy`、`data`、`report` 或 `task`。
+- `[参数]`：写在功能后面，例如配置文件、phase、端口和输出目录。
+
+命令的实际结构是：
+
+```text
+python3 inferbench.py  功能名  该功能所需的参数
+                      ↑       ↑
+                    在这里选   在这里填写配置、端口、输出目录等
+```
+
+例如选择“固定配置性能测试”时，功能名是 `perf`：
+
+```bash
+cd /mnt/data1/zt/benchmark/inference_eval_suite
+
+python3 inferbench.py perf \
+  --config configs/experiments/qwen38-w4a8-speed2k.json \
+  --mode final \
+  --port 8000 \
+  --output runs/performance/w4a8-fixed-001
+```
+
+也就是说，不需要在代码文件中“开启”某个功能；运行命令时，把选中的功能名放在 `inferbench.py` 后面即可。
+
 它支持以下工作：
 
 1. 打印并检查 Docker/vLLM 启动配置；
@@ -51,16 +78,20 @@ inference_eval_suite/
 
 ## 2. 先选运行方式
 
-| 目标 | 入口 | 模型由谁启动 |
-|---|---|---|
-| 只检查配置并查看完整 Docker/vLLM 命令 | `plan` | 不启动模型 |
-| 检查模型、镜像、数据和 AISBench | `doctor` | 不启动模型 |
-| 自动搜索最优参数 | `search` | 脚本逐 case 启停容器 |
-| 用固定配置测试现有服务的性能 | `perf` | 用户提前启动 |
-| 测试现有服务的 GSM8K 精度 | `accuracy` | 用户提前启动 |
-| 构造 100K 等长上下文数据 | `data long-context` | 不启动模型 |
-| 比较或重算已有结果 | `report` | 不请求模型 |
-| 后台运行、看日志、停止任务 | `task` | 取决于后台命令 |
+选好后，把“功能入口”一列的内容直接放在 `python3 inferbench.py` 后面。下面每行都给出了一条可以照着修改的完整示例。
+
+| 目标 | 功能入口 | 完整示例 | 模型由谁启动 |
+|---|---|---|---|
+| 只检查配置并查看完整 Docker/vLLM 命令 | `plan` | `python3 inferbench.py plan --config configs/experiments/qwen38-w4a8-speed2k.json` | 不启动模型 |
+| 检查模型、镜像、数据和 AISBench | `doctor` | `python3 inferbench.py doctor --config configs/experiments/qwen38-w4a8-speed2k.json` | 不启动模型 |
+| 自动搜索最优参数 | `search` | `python3 inferbench.py search --config configs/experiments/qwen38-w4a8-speed2k.json --phase all` | 脚本逐 case 启停容器 |
+| 用固定配置测试现有服务的性能 | `perf` | `python3 inferbench.py perf --config configs/experiments/qwen38-w4a8-speed2k.json --mode final --port 8000 --output runs/performance/test-001` | 用户提前启动 |
+| 测试现有服务的 GSM8K 精度 | `accuracy` | `python3 inferbench.py accuracy --config configs/accuracy/qwen38-w4a8-l28-35-gsm8k.json --limit 1 --output runs/accuracy/smoke` | 用户提前启动 |
+| 构造 100K 等长上下文数据 | `data long-context` | `python3 inferbench.py data long-context --config configs/experiments/qwen38-bf16-long100k.json --source data/performance/throughput_2k_high_entropy.jsonl` | 不启动模型 |
+| 比较两次性能结果 | `report compare` | `python3 inferbench.py report compare --baseline <baseline目录> --candidate <candidate目录>` | 不请求模型 |
+| 在 tmux 后台启动任务 | `task start` | `python3 inferbench.py task start --name w4a8-search -- search --config configs/experiments/qwen38-w4a8-speed2k.json --phase all` | 取决于后台命令 |
+
+例如你选择“自动搜索最优参数”，就执行表中的 `search` 示例；选择“已经启动模型，只跑一次固定性能测试”，就执行 `perf` 示例。
 
 如果你只想复现某条客户启动命令，应手工启动服务后使用 `perf`，不要使用 `search`。如果需要脚本自动更换 vLLM 参数并逐组测试，使用 `search`。
 
