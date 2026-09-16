@@ -14,6 +14,12 @@ runs/accuracy/<run>/
 
 先看 `summary.md`；需要逐题排查时看 `predictions.jsonl`。BF16/W4A8 对比结果在指定的 comparison 目录。
 
+`report accuracy-compare` 会在 comparison 目录生成：
+
+- `comparison.md/json`：两边准确率、四类配对结果和净增益；
+- `disagreements.md`：Baseline 正确/Candidate 错误，以及 Baseline 错误/Candidate 正确的逐题明细；
+- `disagreements.jsonl`：相同分歧题目的机器可读版本。
+
 ## 固定性能测试
 
 ```text
@@ -73,4 +79,3 @@ runs/performance/<experiment>/<identity>/
 5. `cleanup.json` 确认模型是否由控制器正常清理。
 
 `workload_profile.json` 会记录 mode、prompts、repeat、warmup、concurrency 和 workload hash，用于证明不同 case 使用相同测试条件。
-

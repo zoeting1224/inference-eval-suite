@@ -331,6 +331,12 @@ python3 inferbench.py report accuracy-compare \
   --output runs/accuracy/bf16-vs-w4a8
 ```
 
+命令会同时输出：
+
+- `comparison.md/json`：准确率、Both correct、Both wrong、两类单边正确数量和 W4A8 净增益；
+- `disagreements.md`：BF16 正确/W4A8 错误以及 BF16 错误/W4A8 正确的题目、Gold 和两边预测；
+- `disagreements.jsonl`：便于后续程序分析的逐题分歧记录。
+
 ## 8. 功能四：生成 100K 长上下文数据
 
 ```bash

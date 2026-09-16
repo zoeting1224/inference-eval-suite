@@ -31,6 +31,44 @@ def write_json(path: Path, value: object) -> None:
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+def load_predictions(path: Path) -> dict[int, dict]:
+    """Load one completed prediction per source row."""
+    rows: dict[int, dict] = {}
+    with path.open(encoding="utf-8") as f:
+        for line_number, line in enumerate(f, start=1):
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            source_index = int(row["source_index"])
+            if source_index in rows:
+                raise ValueError(
+                    f"duplicate source_index {source_index} in {path} at line {line_number}"
+                )
+            rows[source_index] = row
+    return rows
+
+
+def disagreement_record(category: str, baseline: dict, candidate: dict) -> dict:
+    """Return the fields needed to audit one changed accuracy outcome."""
+    return {
+        "category": category,
+        "source_index": int(baseline["source_index"]),
+        "question": baseline.get("question"),
+        "gold": baseline.get("gold"),
+        "baseline_prediction": baseline.get("prediction"),
+        "candidate_prediction": candidate.get("prediction"),
+        "baseline_status": baseline.get("status"),
+        "candidate_status": candidate.get("status"),
+        "baseline_error": baseline.get("error"),
+        "candidate_error": candidate.get("error"),
+    }
+
+
+def quote_markdown(value: object) -> str:
+    text = "" if value is None else str(value)
+    return "\n".join(f"> {line}" for line in text.splitlines()) or "> "
+
+
 def compare(baseline_dir: Path, candidate_dir: Path, output_dir: Path) -> dict:
     """Compare two completed accuracy runs with the same frozen workload."""
     baseline_dir, candidate_dir = Path(baseline_dir), Path(candidate_dir)
@@ -41,7 +79,65 @@ def compare(baseline_dir: Path, candidate_dir: Path, output_dir: Path) -> dict:
             raise ValueError(f"accuracy comparison refused: {key} differs")
     if manifests[0].get("generation") != manifests[1].get("generation"):
         raise ValueError("accuracy comparison refused: generation settings differ")
+
+    prediction_sets = [
+        load_predictions(path / "predictions.jsonl") for path in (baseline_dir, candidate_dir)
+    ]
+    source_indices = [int(value) for value in manifests[0]["source_indices"]]
+    paired = {
+        "both_correct": [],
+        "both_wrong": [],
+        "baseline_correct_candidate_wrong": [],
+        "baseline_wrong_candidate_correct": [],
+    }
+    disagreements = []
+    for source_index in sorted(source_indices):
+        missing = [
+            label
+            for label, rows in zip(("baseline", "candidate"), prediction_sets)
+            if source_index not in rows
+        ]
+        if missing:
+            raise ValueError(
+                f"accuracy comparison refused: source_index {source_index} missing from "
+                + " and ".join(missing)
+                + " predictions"
+            )
+        baseline_row, candidate_row = (rows[source_index] for rows in prediction_sets)
+        for field in ("question", "gold"):
+            if baseline_row.get(field) != candidate_row.get(field):
+                raise ValueError(
+                    f"accuracy comparison refused: {field} differs for source_index {source_index}"
+                )
+        baseline_correct = bool(baseline_row.get("correct"))
+        candidate_correct = bool(candidate_row.get("correct"))
+        if baseline_correct and candidate_correct:
+            category = "both_correct"
+        elif not baseline_correct and not candidate_correct:
+            category = "both_wrong"
+        elif baseline_correct:
+            category = "baseline_correct_candidate_wrong"
+        else:
+            category = "baseline_wrong_candidate_correct"
+        paired[category].append(source_index)
+        if baseline_correct != candidate_correct:
+            disagreements.append(disagreement_record(category, baseline_row, candidate_row))
+
     baseline, candidate = summaries
+    paired_outcomes = {
+        "both_correct": len(paired["both_correct"]),
+        "both_wrong": len(paired["both_wrong"]),
+        "baseline_correct_candidate_wrong": len(
+            paired["baseline_correct_candidate_wrong"]
+        ),
+        "baseline_wrong_candidate_correct": len(
+            paired["baseline_wrong_candidate_correct"]
+        ),
+        "net_candidate_gain": (
+            len(paired["baseline_wrong_candidate_correct"])
+            - len(paired["baseline_correct_candidate_wrong"])
+        ),
+    }
     result = {
         "workload_match": True,
         "workload_hash": manifests[0]["workload_hash"],
@@ -49,17 +145,74 @@ def compare(baseline_dir: Path, candidate_dir: Path, output_dir: Path) -> dict:
         "candidate": {"directory": str(candidate_dir.resolve()), **candidate},
         "accuracy_change_percentage_points":
             (candidate["accuracy"] - baseline["accuracy"]) * 100.0,
+        "paired_outcomes": paired_outcomes,
+        "artifacts": {
+            "disagreements_jsonl": "disagreements.jsonl",
+            "disagreements_markdown": "disagreements.md",
+        },
     }
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     write_json(output_dir / "comparison.json", result)
+    with (output_dir / "disagreements.jsonl").open("w", encoding="utf-8") as f:
+        for row in disagreements:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+    detail_lines = [
+        "# Accuracy disagreement cases",
+        "",
+        f"- Baseline model: `{baseline['model']}`",
+        f"- Candidate model: `{candidate['model']}`",
+        f"- Workload hash: `{result['workload_hash']}`",
+        "",
+    ]
+    labels = (
+        ("baseline_correct_candidate_wrong", "Baseline correct / Candidate wrong"),
+        ("baseline_wrong_candidate_correct", "Baseline wrong / Candidate correct"),
+    )
+    for category, label in labels:
+        rows = [row for row in disagreements if row["category"] == category]
+        detail_lines.extend([f"## {label} ({len(rows)})", ""])
+        if not rows:
+            detail_lines.extend(["None.", ""])
+            continue
+        for row in rows:
+            detail_lines.extend(
+                [
+                    f"### source_index={row['source_index']}",
+                    "",
+                    "Question:",
+                    "",
+                    quote_markdown(row["question"]),
+                    "",
+                    f"- Gold: `{row['gold']}`",
+                    f"- Baseline prediction: `{row['baseline_prediction']}`",
+                    f"- Candidate prediction: `{row['candidate_prediction']}`",
+                    f"- Baseline status: `{row['baseline_status']}`",
+                    f"- Candidate status: `{row['candidate_status']}`",
+                    "",
+                ]
+            )
+    (output_dir / "disagreements.md").write_text(
+        "\n".join(detail_lines).rstrip() + "\n", encoding="utf-8"
+    )
     (output_dir / "comparison.md").write_text(
         "# Accuracy comparison\n\n"
         f"- Workload match: **PASS**\n"
         f"- Baseline: **{baseline['accuracy'] * 100:.2f}%** ({baseline['correct']}/{baseline['total']})\n"
         f"- Candidate: **{candidate['accuracy'] * 100:.2f}%** ({candidate['correct']}/{candidate['total']})\n"
         f"- Change: **{result['accuracy_change_percentage_points']:+.2f} percentage points**\n"
-        f"- Workload hash: `{result['workload_hash']}`\n",
+        f"- Workload hash: `{result['workload_hash']}`\n\n"
+        "## Paired outcomes\n\n"
+        "| Outcome | Count |\n"
+        "|---|---:|\n"
+        f"| Both correct | {paired_outcomes['both_correct']} |\n"
+        f"| Both wrong | {paired_outcomes['both_wrong']} |\n"
+        f"| Baseline correct / Candidate wrong | {paired_outcomes['baseline_correct_candidate_wrong']} |\n"
+        f"| Baseline wrong / Candidate correct | {paired_outcomes['baseline_wrong_candidate_correct']} |\n"
+        f"| Net candidate gain | {paired_outcomes['net_candidate_gain']:+d} |\n\n"
+        "Detailed changed cases: [disagreements.md](disagreements.md)  \n"
+        "Machine-readable changed cases: `disagreements.jsonl`\n",
         encoding="utf-8",
     )
     print(output_dir / "comparison.md")
