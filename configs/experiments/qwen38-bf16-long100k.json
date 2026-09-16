@@ -1,0 +1,21 @@
+{
+  "extends": [
+    "../models/qwen38-bf16.json",
+    "../hardware/ascend-dual.json",
+    "../benchmarks/aisbench.json",
+    "../workloads/long100k-c8.json",
+    "../search/qwen-mtp.json",
+    "../selection/long100k-c8.json"
+  ],
+  "name": "qwen38-bf16-long100k-c8",
+  "baseline": {
+    "args": {
+      "max-num-seqs": 8,
+      "max-model-len": 131072,
+      "max-num-batched-tokens": 16384,
+      "gpu-memory-utilization": 0.9,
+      "enable-prefix-caching": false,
+      "enable-chunked-prefill": true
+    }
+  }
+}

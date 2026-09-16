@@ -1,0 +1,10 @@
+{
+  "selection": {
+    "constraints": {"failed_requests": {"max": 0}},
+    "objectives": [
+      {"metric": "output_tps", "direction": "max"},
+      {"metric": "tpot_ms", "direction": "min"},
+      {"metric": "ttft_ms", "direction": "min"}
+    ]
+  }
+}

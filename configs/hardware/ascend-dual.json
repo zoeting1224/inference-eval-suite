@@ -1,0 +1,15 @@
+{
+  "extends": ["ascend-single.json"],
+  "service": {
+    "resource_ids": ["ascend-0", "ascend-1"],
+    "docker_args": [
+      "--network", "host", "--ipc", "host", "--shm-size", "16g",
+      "--device", "/dev/davinci0", "--device", "/dev/davinci1", "--device", "/dev/davinci_manager",
+      "--device", "/dev/devmm_svm", "--device", "/dev/hisi_hdc",
+      "-v", "/usr/local/dcmi:/usr/local/dcmi:ro",
+      "-v", "/usr/local/Ascend/driver:/usr/local/Ascend/driver:ro"
+    ],
+    "env": {"ASCEND_RT_VISIBLE_DEVICES": "0,1"}
+  },
+  "baseline": {"args": {"tensor-parallel-size": 2, "data-parallel-size": 1}}
+}

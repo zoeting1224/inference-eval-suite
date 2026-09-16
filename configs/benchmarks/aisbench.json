@@ -1,0 +1,10 @@
+{
+  "benchmark": {
+    "python": "/mnt/data1/zt/miniconda3/envs/AISBench/bin/python",
+    "binary": "/mnt/data1/zt/miniconda3/envs/AISBench/bin/ais_bench",
+    "model_class": "VLLMCustomAPIChat",
+    "timeout_s": 7200,
+    "detail_time_scale": 1.0,
+    "model_options": {}
+  }
+}

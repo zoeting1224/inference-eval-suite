@@ -1,0 +1,13 @@
+{
+  "workload": {
+    "concurrency": 8,
+    "input_tokens": 100000,
+    "input_tolerance": 0,
+    "output_tokens": 512,
+    "cache_policy": "cold",
+    "generation_kwargs": {"temperature": 0.0, "ignore_eos": true},
+    "datasets": [{"name": "long_context", "path": "data/performance/long100k_c8/requests.jsonl", "text_field": "question"}],
+    "fast": {"prompts_per_dataset": 8, "repeats": 1, "warmups": 3},
+    "final": {"prompts_per_dataset": 8, "repeats": 3, "warmups": 3}
+  }
+}

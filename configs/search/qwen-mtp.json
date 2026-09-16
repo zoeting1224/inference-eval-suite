@@ -1,0 +1,18 @@
+{
+  "search": {
+    "max_cases_per_phase": 12,
+    "phases": [
+      {"name": "phase1", "description": "Prefill batch budget", "strategy": "one_at_a_time",
+       "parameters": {"args.max-num-batched-tokens": [8192, 16384, 32768]}},
+      {"name": "phase2", "description": "KV/activation memory headroom", "strategy": "one_at_a_time",
+       "parameters": {"args.gpu-memory-utilization": [0.9, 0.95]}},
+      {"name": "phase3", "description": "Qwen-specific MTP; null omits speculative-config", "strategy": "one_at_a_time",
+       "parameters": {"args.speculative-config": [null,
+          {"method": "qwen3_5_mtp", "num_speculative_tokens": 2, "enforce_eager": true},
+          {"method": "qwen3_5_mtp", "num_speculative_tokens": 3, "enforce_eager": true},
+          {"method": "qwen3_5_mtp", "num_speculative_tokens": 5, "enforce_eager": true}]}},
+      {"name": "phase4", "description": "Graph: full decode versus backend default", "strategy": "one_at_a_time",
+       "parameters": {"args.compilation-config": [{"cudagraph_mode": "FULL_DECODE_ONLY"}, null]}}
+    ]
+  }
+}

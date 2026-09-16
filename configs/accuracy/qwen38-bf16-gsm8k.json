@@ -1,0 +1,24 @@
+{
+  "name": "qwen38-bf16-gsm8k",
+  "endpoint": {
+    "url": "http://127.0.0.1:8000/v1/chat/completions",
+    "model": "Qwen3.8-27B-BF16",
+    "timeout_s": 300
+  },
+  "dataset": {
+    "file": "data/accuracy/gsm8k/test.jsonl",
+    "question_field": "question",
+    "answer_field": "answer"
+  },
+  "limit": 200,
+  "sample_seed": 1024,
+  "generation": {
+    "temperature": 0.0,
+    "seed": 1024,
+    "max_tokens": 512,
+    "chat_template_kwargs": {
+      "enable_thinking": false
+    }
+  },
+  "prompt_template": "Solve the following math problem. Return only the final answer in the format: #### <number>\n\nQuestion:\n{question}"
+}

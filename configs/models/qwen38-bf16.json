@@ -1,0 +1,21 @@
+{
+  "model": {
+    "path": "/mnt/data1/models/Qwen3.8-27B",
+    "container_path": "/workspace/model",
+    "served_name": "Qwen3.8-27B-BF16",
+    "tokenizer": "/mnt/data1/models/Qwen3.8-27B",
+    "trust_remote_code": false
+  },
+  "baseline": {
+    "args": {
+      "max-model-len": 4096,
+      "gpu-memory-utilization": 0.85,
+      "enable-prefix-caching": false,
+      "enable-chunked-prefill": true
+    },
+    "env": {
+      "TASK_QUEUE_ENABLE": "1",
+      "OMP_NUM_THREADS": "1"
+    }
+  }
+}

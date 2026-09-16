@@ -1,0 +1,11 @@
+{
+  "search": {
+    "max_cases_per_phase": 12,
+    "phases": [
+      {"name": "phase1", "description": "Batch token budget", "strategy": "one_at_a_time",
+       "parameters": {"args.max-num-batched-tokens": [8192, 16384, 32768]}},
+      {"name": "phase2", "description": "Memory budget", "strategy": "one_at_a_time",
+       "parameters": {"args.gpu-memory-utilization": [0.9, 0.95]}}
+    ]
+  }
+}

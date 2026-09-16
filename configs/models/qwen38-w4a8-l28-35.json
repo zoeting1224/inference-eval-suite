@@ -1,0 +1,26 @@
+{
+  "model": {
+    "path": "/mnt/data1/zt/qwen38-w4a8-test/output-layers28-35",
+    "container_path": "/workspace/model",
+    "served_name": "Qwen3.8-27B-W4A8-L28-35",
+    "tokenizer": "/mnt/data1/zt/qwen38-w4a8-test/output-layers28-35",
+    "trust_remote_code": false,
+    "docker_args": [
+      "--mount",
+      "type=bind,src=/mnt/data1/zt/qwen38-w4a8-test/config/w4a8.py,dst=/vllm-workspace/vllm-ascend/vllm_ascend/quantization/methods/w4a8.py,readonly"
+    ]
+  },
+  "baseline": {
+    "args": {
+      "quantization": "ascend",
+      "max-model-len": 4096,
+      "gpu-memory-utilization": 0.85,
+      "enable-prefix-caching": false,
+      "enable-chunked-prefill": true
+    },
+    "env": {
+      "TASK_QUEUE_ENABLE": "1",
+      "OMP_NUM_THREADS": "1"
+    }
+  }
+}

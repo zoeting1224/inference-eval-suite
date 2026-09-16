@@ -1,0 +1,22 @@
+{
+  "model": {
+    "path": "/REPLACE/model",
+    "container_path": "/models/target",
+    "served_name": "my-model",
+    "tokenizer": "/REPLACE/model",
+    "trust_remote_code": false
+  },
+  "baseline": {
+    "args": {
+      "max-num-seqs": 32,
+      "max-model-len": 32768,
+      "max-num-batched-tokens": 8192,
+      "gpu-memory-utilization": 0.9,
+      "enable-prefix-caching": false,
+      "enable-chunked-prefill": true,
+      "quantization": null,
+      "speculative-config": null
+    },
+    "env": {}
+  }
+}

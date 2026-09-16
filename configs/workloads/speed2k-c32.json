@@ -1,0 +1,15 @@
+{
+  "workload": {
+    "concurrency": 32,
+    "input_tokens": null,
+    "output_tokens": 512,
+    "cache_policy": "cold",
+    "generation_kwargs": {"temperature": 0.0, "ignore_eos": true},
+    "datasets": [
+      {"name": "high_entropy", "path": "data/performance/throughput_2k_high_entropy.jsonl", "text_field": "question"},
+      {"name": "low_entropy", "path": "data/performance/throughput_2k_low_entropy.jsonl", "text_field": "question"}
+    ],
+    "fast": {"prompts_per_dataset": 32, "repeats": 1, "warmups": 3},
+    "final": {"prompts_per_dataset": 32, "repeats": 3, "warmups": 3}
+  }
+}

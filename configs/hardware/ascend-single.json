@@ -1,0 +1,21 @@
+{
+  "service": {
+    "kind": "docker",
+    "image": "quay.io/ascend/vllm-ascend:v0.26.0rc1-openeuler",
+    "command": ["vllm", "serve", "{model}"],
+    "resource_ids": ["ascend-0"],
+    "host": "127.0.0.1",
+    "port": 8004,
+    "health_timeout_s": 1200,
+    "stop_timeout_s": 45,
+    "docker_args": [
+      "--network", "host", "--ipc", "host", "--shm-size", "16g",
+      "--device", "/dev/davinci0", "--device", "/dev/davinci_manager",
+      "--device", "/dev/devmm_svm", "--device", "/dev/hisi_hdc",
+      "-v", "/usr/local/dcmi:/usr/local/dcmi:ro",
+      "-v", "/usr/local/Ascend/driver:/usr/local/Ascend/driver:ro"
+    ],
+    "env": {"ASCEND_RT_VISIBLE_DEVICES": "0", "PYTORCH_NPU_ALLOC_CONF": "expandable_segments:True", "TASK_QUEUE_ENABLE": "1"}
+  },
+  "baseline": {"args": {"tensor-parallel-size": 1, "data-parallel-size": 1, "shutdown-timeout": 30}}
+}

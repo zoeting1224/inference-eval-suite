@@ -1,0 +1,18 @@
+{
+  "selection": {
+    "constraints": {
+      "failed_requests": {"max": 0},
+      "first_response_ms": {"max": 95000},
+      "all_first_tokens_ms": {"max": 700000},
+      "mean_decode_tps": {"min": 15},
+      "max_tpot_ms": {"max": 125},
+      "prefill_per_request_mean_tps": {"min": 1000},
+      "peak_inflight": {"min": 8},
+      "submit_span_ms": {"max": 1000}
+    },
+    "objectives": [
+      {"metric": "mean_decode_tps", "direction": "max"},
+      {"metric": "all_first_tokens_ms", "direction": "min"}
+    ]
+  }
+}
