@@ -322,6 +322,20 @@ python3 inferbench.py task start --name w4a8-gsm8k -- \
 
 服务地址和模型名在精度配置的 `endpoint.url`、`endpoint.model` 中修改；题数由 `limit` 控制。相同 `--output` 中断续跑时会跳过 `predictions.jsonl` 中已完成的题目。
 
+判分只接受模型明确给出的 `#### <number>` 或 `\\boxed{<number>}` 最终答案；不再把未完成推理过程中的最后一个数字当成答案。`summary.json` 会分别记录缺少最终答案的题数、达到输出上限的题数，以及两者重叠的题数。`predictions.jsonl` 保留每题的 `finish_reason` 和输出 token 用量。改变 `generation.max_tokens` 或判分规则后，必须使用新的 `--output` 目录；脚本会拒绝在旧目录上混合续跑。
+
+例如复测 1024-token 输出上限，不需要改动历史配置文件：
+
+```bash
+python3 inferbench.py accuracy \
+  --config configs/accuracy/qwen38-w4a8-l8-55-gsm8k.json \
+  --limit 200 \
+  --max-tokens 1024 \
+  --output runs/accuracy/qwen38-w4a8-l8-55-gsm8k-200-out1024
+```
+
+`--max-tokens` 的实际取值会写入该次结果的 `manifest.json` 和 `summary.json`。四组对照都要使用相同数值及各自的新目录。
+
 比较 BF16 和量化模型精度：
 
 ```bash
