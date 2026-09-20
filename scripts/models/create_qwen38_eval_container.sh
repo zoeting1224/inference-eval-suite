@@ -20,5 +20,6 @@ docker run -dit \
   -v /usr/local/bin/npu-smi:/usr/local/bin/npu-smi:ro \
   -v /mnt/data1/models:/models \
   -v /mnt/data1/zt/benchmark/inference_eval_suite:/workspace/inference_eval_suite \
+  -v /mnt/data1/zt/qwen38-w4a8-test:/workspace/qwen38-w4a8-test \
   -v /mnt/data1/zt/qwen38-w4a8-test/config/w4a8.py:/vllm-workspace/vllm-ascend/vllm_ascend/quantization/methods/w4a8.py:ro \
   "$IMAGE" bash
