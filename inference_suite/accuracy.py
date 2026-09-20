@@ -21,6 +21,12 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+SCORING_RULE = "explicit_final_answer_v1"
+FINAL_ANSWER_PATTERNS = (
+    r"####\s*([-+]?\d[\d,]*(?:\.\d+)?)",
+    r"\\boxed\{\s*([-+]?\d[\d,]*(?:\.\d+)?)\s*\}",
+)
+
 
 def load_json(path: Path) -> dict:
     with path.open(encoding="utf-8") as f:
@@ -79,6 +85,11 @@ def compare(baseline_dir: Path, candidate_dir: Path, output_dir: Path) -> dict:
             raise ValueError(f"accuracy comparison refused: {key} differs")
     if manifests[0].get("generation") != manifests[1].get("generation"):
         raise ValueError("accuracy comparison refused: generation settings differ")
+    for key in ("prompt_template", "scoring_rule"):
+        if manifests[0].get(key) != manifests[1].get(key):
+            raise ValueError(f"accuracy comparison refused: {key} differs")
+    if summaries[0].get("scoring_rule") != summaries[1].get("scoring_rule"):
+        raise ValueError("accuracy comparison refused: scoring rules differ")
 
     prediction_sets = [
         load_predictions(path / "predictions.jsonl") for path in (baseline_dir, candidate_dir)
@@ -219,15 +230,22 @@ def compare(baseline_dir: Path, candidate_dir: Path, output_dir: Path) -> dict:
     return result
 
 
-def extract_number(text: str) -> str | None:
-    patterns = (
-        r"####\s*([-+]?\d[\d,]*(?:\.\d+)?)",
-        r"\\boxed\{\s*([-+]?\d[\d,]*(?:\.\d+)?)\s*\}",
-    )
-    for pattern in patterns:
+def extract_final_answer(text: str) -> str | None:
+    """Only a formatted final answer may be scored as a model prediction."""
+    if not isinstance(text, str):
+        return None
+    for pattern in FINAL_ANSWER_PATTERNS:
         found = re.findall(pattern, text)
         if found:
             return normalize_number(found[-1])
+    return None
+
+
+def extract_gold_number(text: str) -> str | None:
+    """Read a dataset label; unlike model output, legacy plain numbers are valid."""
+    final = extract_final_answer(text)
+    if final is not None:
+        return final
     found = re.findall(r"[-+]?\d[\d,]*(?:\.\d+)?", text)
     return normalize_number(found[-1]) if found else None
 
@@ -261,6 +279,7 @@ def main(argv=None, root=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument("--limit", type=int, help="override config sample limit; 0 means full split")
+    parser.add_argument("--max-tokens", type=int, help="override generation.max_tokens for this run")
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args(argv)
     root = Path(root) if root else Path(__file__).resolve().parents[1]
@@ -268,7 +287,11 @@ def main(argv=None, root=None) -> int:
     config = load_json(args.config)
     dataset_cfg = config["dataset"]
     endpoint = config["endpoint"]
-    generation = config["generation"]
+    generation = dict(config["generation"])
+    if args.max_tokens is not None:
+        if args.max_tokens <= 0:
+            raise ValueError("--max-tokens must be positive")
+        generation["max_tokens"] = args.max_tokens
     limit = config.get("limit", 200) if args.limit is None else args.limit
 
     output = args.output
@@ -294,20 +317,20 @@ def main(argv=None, root=None) -> int:
         {
             "source_index": row["_source_index"],
             "question": row[dataset_cfg.get("question_field", "question")],
-            "gold": extract_number(row[dataset_cfg.get("answer_field", "answer")]),
+            "gold": extract_gold_number(row[dataset_cfg.get("answer_field", "answer")]),
         }
         for row in dataset
     ]
+    if any(item["gold"] is None for item in selected):
+        raise ValueError("dataset contains an answer that cannot be parsed as a number")
     workload_hash = hashlib.sha256(
         json.dumps(selected, ensure_ascii=False, sort_keys=True).encode("utf-8")
     ).hexdigest()
 
-    completed: dict[int, dict] = {}
-    if predictions_path.exists():
-        for line in predictions_path.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                row = json.loads(line)
-                completed[int(row["source_index"])] = row
+    prompt_template = config.get(
+        "prompt_template",
+        "Solve the problem. Return the final answer as: #### <number>\n\nQuestion:\n{question}",
+    )
 
     manifest = {
         "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
@@ -321,13 +344,38 @@ def main(argv=None, root=None) -> int:
         "selected_count": len(selected),
         "workload_hash": workload_hash,
         "source_indices": [row["source_index"] for row in selected],
+        "prompt_template": prompt_template,
+        "scoring_rule": SCORING_RULE,
     }
-    write_json(output / "manifest.json", manifest)
+    manifest_path = output / "manifest.json"
+    if manifest_path.exists():
+        previous = load_json(manifest_path)
+        for key in (
+            "endpoint", "generation", "dataset_sha256", "sample_seed",
+            "source_indices", "workload_hash", "prompt_template", "scoring_rule",
+        ):
+            if previous.get(key) != manifest[key]:
+                raise ValueError(
+                    f"output directory contains a different {key}; use a new --output: {output}"
+                )
+    elif predictions_path.exists():
+        raise ValueError(f"predictions exist without a manifest; use a new --output: {output}")
 
-    prompt_template = config.get(
-        "prompt_template",
-        "Solve the problem. Return the final answer as: #### <number>\n\nQuestion:\n{question}",
-    )
+    completed: dict[int, dict] = {}
+    if predictions_path.exists():
+        for line in predictions_path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                row = json.loads(line)
+                if row.get("scoring_rule") != SCORING_RULE:
+                    raise ValueError(
+                        f"predictions use an older scoring rule; use a new --output: {output}"
+                    )
+                source_index = int(row["source_index"])
+                if source_index in completed:
+                    raise ValueError(f"duplicate source_index {source_index} in {predictions_path}")
+                completed[source_index] = row
+    write_json(manifest_path, manifest)
+
     for position, item in enumerate(selected, start=1):
         source_index = item["source_index"]
         if source_index in completed:
@@ -353,17 +401,29 @@ def main(argv=None, root=None) -> int:
             "status": "request_error",
             "latency_s": None,
             "error": None,
+            "finish_reason": None,
+            "usage": None,
+            "output_limit_hit": False,
+            "scoring_rule": SCORING_RULE,
         }
         try:
             response = post_json(endpoint["url"], payload, int(endpoint.get("timeout_s", 300)))
-            content = response["choices"][0]["message"]["content"]
-            prediction = extract_number(content)
+            choice = response["choices"][0]
+            content = choice["message"]["content"]
+            prediction = extract_final_answer(content)
+            usage = response.get("usage") or {}
+            finish_reason = choice.get("finish_reason")
+            output_limit_hit = finish_reason == "length" or (
+                int(usage.get("completion_tokens") or 0) >= int(generation["max_tokens"])
+            )
             record.update(
                 response=content,
                 prediction=prediction,
                 correct=prediction is not None and prediction == item["gold"],
                 status="ok" if prediction is not None else "parse_error",
+                finish_reason=finish_reason,
                 usage=response.get("usage"),
+                output_limit_hit=output_limit_hit,
             )
         except Exception as exc:  # keep the full run and count this row as incorrect
             record["error"] = f"{type(exc).__name__}: {exc}"
@@ -382,6 +442,10 @@ def main(argv=None, root=None) -> int:
     correct = sum(bool(row["correct"]) for row in rows)
     request_errors = sum(row["status"] == "request_error" for row in rows)
     parse_errors = sum(row["status"] == "parse_error" for row in rows)
+    output_limit_hits = sum(bool(row.get("output_limit_hit")) for row in rows)
+    output_limit_without_final_answer = sum(
+        bool(row.get("output_limit_hit")) and row["status"] == "parse_error" for row in rows
+    )
     total = len(selected)
     summary = {
         "model": endpoint["model"],
@@ -392,6 +456,10 @@ def main(argv=None, root=None) -> int:
         "accuracy": correct / total if total else 0.0,
         "request_errors": request_errors,
         "parse_errors": parse_errors,
+        "max_tokens": int(generation["max_tokens"]),
+        "output_limit_hits": output_limit_hits,
+        "output_limit_without_final_answer": output_limit_without_final_answer,
+        "scoring_rule": SCORING_RULE,
         "workload_hash": workload_hash,
     }
     write_json(output / "summary.json", summary)
@@ -400,8 +468,12 @@ def main(argv=None, root=None) -> int:
         f"- Model: `{summary['model']}`\n"
         f"- Dataset: `{summary['dataset']}`\n"
         f"- Accuracy: **{summary['accuracy'] * 100:.2f}%** ({correct}/{total})\n"
+        f"- Max output tokens: {generation['max_tokens']}\n"
+        "- Scoring rule: explicit `####` or `\\boxed{}` final answer; no last-number fallback\n"
         f"- Request errors: {request_errors}\n"
-        f"- Parse errors: {parse_errors}\n"
+        f"- Missing final answer: {parse_errors}\n"
+        f"- Output-limit hits: {output_limit_hits}\n"
+        f"- Output-limit hits without final answer: {output_limit_without_final_answer}\n"
         f"- Workload hash: `{workload_hash}`\n",
         encoding="utf-8",
     )

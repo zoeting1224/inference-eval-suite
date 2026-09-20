@@ -64,6 +64,7 @@ def build_parser() -> argparse.ArgumentParser:
     acc = commands.add_parser("accuracy", help="evaluate an already-running service")
     add_config(acc)
     acc.add_argument("--limit", type=int)
+    acc.add_argument("--max-tokens", type=int, help="override generation.max_tokens")
     acc.add_argument("--output", required=True, type=Path)
 
     data = commands.add_parser("data", help="prepare deterministic datasets")
@@ -163,6 +164,8 @@ def main(argv=None) -> None:
         forwarded = ["--config", str(args.config), "--output", str(args.output)]
         if args.limit is not None:
             forwarded += ["--limit", str(args.limit)]
+        if args.max_tokens is not None:
+            forwarded += ["--max-tokens", str(args.max_tokens)]
         raise SystemExit(accuracy.main(forwarded, ROOT))
     elif args.command == "data" and args.data_command == "long-context":
         forwarded = ["--config", str(args.config), "--text-field", args.text_field, "--seed", str(args.seed)]
