@@ -1,0 +1,75 @@
+{
+  "search": {
+    "max_cases_per_phase": 12,
+    "phases": [
+      {
+        "name": "phase1",
+        "description": "High priority: Qwen MTP speculative tokens",
+        "strategy": "one_at_a_time",
+        "parameters": {
+          "args.speculative-config": [
+            null,
+            {"method": "qwen3_5_mtp", "num_speculative_tokens": 1, "enforce_eager": true},
+            {"method": "qwen3_5_mtp", "num_speculative_tokens": 2, "enforce_eager": true},
+            {"method": "qwen3_5_mtp", "num_speculative_tokens": 3, "enforce_eager": true},
+            {"method": "qwen3_5_mtp", "num_speculative_tokens": 4, "enforce_eager": true}
+          ]
+        }
+      },
+      {
+        "name": "phase2",
+        "description": "High priority: scheduler capacity and batch token budget",
+        "strategy": "grid",
+        "skip_incompatible": true,
+        "parameters": {
+          "args.max-num-seqs": [16, 32, 64],
+          "args.max-num-batched-tokens": [16384, 32768]
+        }
+      },
+      {
+        "name": "phase3",
+        "description": "Medium priority: KV cache, prefix cache and context budget",
+        "strategy": "one_at_a_time",
+        "skip_incompatible": true,
+        "parameters": {
+          "args.gpu-memory-utilization": [0.9, 0.95],
+          "args.enable-prefix-caching": [true, false],
+          "args.max-model-len": [131072, 262144]
+        }
+      },
+      {
+        "name": "phase4",
+        "description": "Medium priority: graph mode",
+        "strategy": "variants",
+        "variants": [
+          {
+            "args.compilation-config": {"cudagraph_mode": "FULL_DECODE_ONLY"},
+            "args.enforce-eager": null
+          },
+          {
+            "args.compilation-config": null,
+            "args.enforce-eager": null
+          },
+          {
+            "args.compilation-config": null,
+            "args.enforce-eager": true
+          }
+        ]
+      },
+      {
+        "name": "phase5",
+        "description": "Low priority: communication and CPU tuning",
+        "strategy": "one_at_a_time",
+        "enabled": false,
+        "parameters": {
+          "env.HCCL_BUFFSIZE": ["256", "512", "1024"],
+          "env.OMP_NUM_THREADS": ["1", "2", "4", "8"],
+          "args.additional-config": [
+            {"enable_cpu_binding": true},
+            {"enable_cpu_binding": false}
+          ]
+        }
+      }
+    ]
+  }
+}

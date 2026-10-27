@@ -1,0 +1,7 @@
+{
+  "extends": [
+    "qwen38-w8a8.json",
+    "../search/qwen-comprehensive.json"
+  ],
+  "name": "qwen38-w8a8-comprehensive"
+}

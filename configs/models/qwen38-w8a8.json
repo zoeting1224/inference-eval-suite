@@ -1,0 +1,13 @@
+{
+  "model": {
+    "path": "/mnt/data1/zt/qwen38-w8a8",
+    "container_path": "/workspace/model",
+    "served_name": "Qwen3.8-27B-W8A8",
+    "tokenizer": "/mnt/data1/zt/qwen38-w8a8"
+  },
+  "baseline": {
+    "args": {
+      "quantization": "ascend"
+    }
+  }
+}

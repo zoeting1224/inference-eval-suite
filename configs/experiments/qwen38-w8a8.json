@@ -1,0 +1,22 @@
+{
+  "extends": [
+    "../models/qwen38-w8a8.json",
+    "../hardware/ascend-dual.json",
+    "../benchmarks/aisbench.json",
+    "../workloads/speed2k-c32.json",
+    "../search/general.json",
+    "../selection/throughput.json"
+  ],
+  "name": "qwen38-w8a8",
+  "baseline": {
+    "env": {},
+    "args": {
+      "max-num-seqs": 32,
+      "max-model-len": 4096,
+      "max-num-batched-tokens": 16384,
+      "gpu-memory-utilization": 0.85,
+      "enable-prefix-caching": false,
+      "enable-chunked-prefill": true
+    }
+  }
+}

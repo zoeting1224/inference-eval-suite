@@ -84,12 +84,12 @@ inference_eval_suite/
 |---|---|---|---|
 | 只检查配置并查看完整 Docker/vLLM 命令 | `plan` | `python3 inferbench.py plan --config configs/experiments/qwen38-w4a8-speed2k.json` | 不启动模型 |
 | 检查模型、镜像、数据和 AISBench | `doctor` | `python3 inferbench.py doctor --config configs/experiments/qwen38-w4a8-speed2k.json` | 不启动模型 |
-| 自动搜索最优参数 | `search` | `python3 inferbench.py search --config configs/experiments/qwen38-w4a8-speed2k.json --phase all` | 脚本逐 case 启停容器 |
+| 自动搜索最优参数（全面预设） | `search` | `python3 inferbench.py search --config configs/experiments/qwen38-w8a8-comprehensive.json --phase all` | 脚本逐 case 启停容器 |
 | 用固定配置测试现有服务的性能 | `perf` | `python3 inferbench.py perf --config configs/experiments/qwen38-w4a8-speed2k.json --mode final --port 8000 --output runs/performance/test-001` | 用户提前启动 |
 | 测试现有服务的 GSM8K 精度 | `accuracy` | `python3 inferbench.py accuracy --config configs/accuracy/qwen38-w4a8-l28-35-gsm8k.json --limit 1 --output runs/accuracy/smoke` | 用户提前启动 |
 | 构造 100K 等长上下文数据 | `data long-context` | `python3 inferbench.py data long-context --config configs/experiments/qwen38-bf16-long100k.json --source data/performance/throughput_2k_high_entropy.jsonl` | 不启动模型 |
 | 比较两次性能结果 | `report compare` | `python3 inferbench.py report compare --baseline <baseline目录> --candidate <candidate目录>` | 不请求模型 |
-| 在 tmux 后台启动任务 | `task start` | `python3 inferbench.py task start --name w4a8-search -- search --config configs/experiments/qwen38-w4a8-speed2k.json --phase all` | 取决于后台命令 |
+| 在 tmux 后台启动任务 | `task start` | `python3 inferbench.py task start --name w8a8-full-search -- search --config configs/experiments/qwen38-w8a8-comprehensive.json --phase all` | 取决于后台命令 |
 
 例如你选择“自动搜索最优参数”，就执行表中的 `search` 示例；选择“已经启动模型，只跑一次固定性能测试”，就执行 `perf` 示例。
 
@@ -233,7 +233,7 @@ inference_eval_suite/
 
 搜索阶段按顺序继承 incumbent：`phase1` 选出的最佳 MTP 会成为 `phase2` 的起点，随后继续搜索 Batch、显存、Graph 和系统参数。不要把所有维度直接做笛卡尔积，否则 case 数量会迅速失控。
 
-在新版项目中，上述设计应写入 `configs/search/*.json`。下面给出完整结构示例；MTP 的 `method` 必须按模型和 vLLM 后端调整：
+新版已内置可直接引用的 `configs/search/qwen-comprehensive.json`，内容如下。它是旧版 `search_space.env` 的可执行 JSON 迁移版，不需要用户重新手写全部候选值；MTP 的 `method` 仍必须按模型和 vLLM 后端核对：
 
 ```json
 {
@@ -258,6 +258,7 @@ inference_eval_suite/
         "name": "phase2",
         "description": "Batch scheduler",
         "strategy": "grid",
+        "skip_incompatible": true,
         "parameters": {
           "args.max-num-seqs": [16, 32, 64],
           "args.max-num-batched-tokens": [16384, 32768]
@@ -267,6 +268,7 @@ inference_eval_suite/
         "name": "phase3",
         "description": "KV cache and context budget",
         "strategy": "one_at_a_time",
+        "skip_incompatible": true,
         "parameters": {
           "args.gpu-memory-utilization": [0.9, 0.95],
           "args.enable-prefix-caching": [true, false],
@@ -276,13 +278,21 @@ inference_eval_suite/
       {
         "name": "phase4",
         "description": "Graph mode",
-        "strategy": "one_at_a_time",
-        "parameters": {
-          "args.compilation-config": [
-            {"cudagraph_mode": "FULL_DECODE_ONLY"},
-            null
-          ]
-        }
+        "strategy": "variants",
+        "variants": [
+          {
+            "args.compilation-config": {"cudagraph_mode": "FULL_DECODE_ONLY"},
+            "args.enforce-eager": null
+          },
+          {
+            "args.compilation-config": null,
+            "args.enforce-eager": null
+          },
+          {
+            "args.compilation-config": null,
+            "args.enforce-eager": true
+          }
+        ]
       },
       {
         "name": "phase5",
@@ -303,15 +313,31 @@ inference_eval_suite/
 }
 ```
 
-这是一份搜索设计模板，不是对所有 workload 都可原样运行的固定配置。引用前必须按实验约束裁剪：
+可直接运行的 Qwen3.8 W8A8 组合入口是 `configs/experiments/qwen38-w8a8-comprehensive.json`。其他模型也可以在自己的实验配置中引用该搜索文件，但运行前仍要核对：
 
-- `max-num-seqs` 不能小于 `workload.concurrency`；例如并发 32 时必须删除候选 16。
-- `max-model-len` 必须覆盖模板后的输入 token 与输出 token 之和；2K 吞吐测试通常不应保留 131K/262K。
-- `cache_policy=cold` 时必须固定 `enable-prefix-caching=false`；只有专门比较重复前缀收益时才使用 on/off。
+- `max-num-seqs` 不能小于 `workload.concurrency`；`skip_incompatible=true` 会自动跳过这类候选并记录原因。
+- `max-model-len` 必须覆盖模板后的输入 token 与输出 token 之和；不兼容候选会自动跳过，但 2K 测试仍建议主动删除没有意义的 131K/262K 候选以节省时间。
+- `cache_policy=cold` 时 Prefix Cache 必须为 off；预设会跳过 on，只有 warm workload 才真正比较 on/off。
 - `phase5` 收益通常较低，默认 `enabled=false`，在高收益阶段稳定后再单独启用。
-- `Graph=eager` 在不同 vLLM 版本中的参数表达不同，应先用 `plan` 检查实际启动命令。
+- Graph 使用 `variants`，确保 `FULL_DECODE_ONLY`、后端默认和 `--enforce-eager` 三种模式互斥，不会拼出无效组合。
+- `plan` 会列出每个 phase 的 runnable/skipped 数量和跳过原因；正式搜索目录还会保存 `phaseN_skipped.json`。
 
-旧项目中的全面搜索并非只依赖 `search_space.env`。该文件只保存候选数组；`tune.sh` 负责 phase 顺序、`phase2` 网格组合、最佳配置继承、并发调整和 `phase5` 手动执行，同时还依赖 `base.env`、`lib/vllm.sh`、`lib/aisbench.sh` 与汇总脚本。新版项目应使用 JSON 搜索配置，不要直接把旧 `.env` 当作 `inferbench.py` 的输入。
+旧项目中的全面搜索并非只依赖 `search_space.env`。该文件只保存候选数组；`tune.sh` 还负责 phase 顺序、网格组合和最佳配置继承。新版已把这些行为统一放入执行器：候选值在 `qwen-comprehensive.json`，组合/继承/兼容性检查由 `inference_suite/` 完成。旧 `.env` 不再作为运行入口。
+
+只查看全面搜索将运行哪些 case，不启动模型：
+
+```bash
+python3 inferbench.py plan \
+  --config configs/experiments/qwen38-w8a8-comprehensive.json
+```
+
+如需最后再调低收益 phase5（它不会包含在默认 `all` 中）：
+
+```bash
+python3 inferbench.py search \
+  --config configs/experiments/qwen38-w8a8-comprehensive.json \
+  --phase phase5
+```
 
 在 `configs/selection/*.json` 中配置硬门槛和排序目标，例如：
 
@@ -378,9 +404,9 @@ phase0 baseline
 先执行 `plan` 和 `doctor`，确认无误后放到 tmux 后台：
 
 ```bash
-python3 inferbench.py task start --name w4a8-search -- \
+python3 inferbench.py task start --name w8a8-full-search -- \
   search \
-  --config configs/experiments/qwen38-w4a8-speed2k.json \
+  --config configs/experiments/qwen38-w8a8-comprehensive.json \
   --phase all
 ```
 
@@ -393,7 +419,7 @@ python3 inferbench.py task start --name w4a8-search -- \
 
 同一实验身份和 phase 已完整完成时，重复执行会返回已有结果，不浪费时间。确实需要重新测试时加 `--new-run`。
 
-运行前重点检查 `plan` 输出：实际 workload 并发、每个 phase 的 case 数、MTP 方法、`max-model-len`、Prefix Cache 策略以及 Docker/NPU 映射。低收益 `phase5` 不建议第一次执行 `all` 时开启。
+运行前重点检查 `plan` 输出：实际 workload 并发、每个 phase 的 runnable/skipped case 数、MTP 方法、`max-model-len`、Prefix Cache 策略以及 Docker/NPU 映射。低收益 `phase5` 默认关闭，不会被第一次 `all` 执行。
 
 ### 最终 baseline/best 公平对比
 

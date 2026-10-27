@@ -136,12 +136,28 @@ def validate(c):
         raise ValueError("search phase names must be unique phase1, phase2, ...")
     positive(c["search"]["max_cases_per_phase"], "search.max_cases_per_phase")
     for p in phases:
-        if p["strategy"] not in ("one_at_a_time", "grid") or not p["parameters"]:
-            raise ValueError("phase needs a strategy and nonempty parameters")
-        for key, values in p["parameters"].items():
-            if not re.fullmatch(r"(args|env)\.[A-Za-z0-9_-]+", key) or not isinstance(values, list) or not values:
-                raise ValueError(f"invalid search dimension {key}")
-        candidates(c["baseline"], p, c["search"]["max_cases_per_phase"])
+        allowed_phase = {"name", "description", "strategy", "parameters", "variants",
+                         "enabled", "skip_incompatible"}
+        if set(p) - allowed_phase:
+            raise ValueError(f"unknown search phase fields: {set(p)-allowed_phase}")
+        if not isinstance(p.get("enabled", True), bool) or not isinstance(p.get("skip_incompatible", False), bool):
+            raise ValueError("enabled and skip_incompatible must be booleans")
+        strategy = p.get("strategy")
+        if strategy in ("one_at_a_time", "grid"):
+            if not p.get("parameters") or "variants" in p:
+                raise ValueError("one_at_a_time/grid phase needs nonempty parameters only")
+            for key, values in p["parameters"].items():
+                if not _search_key(key) or not isinstance(values, list) or not values:
+                    raise ValueError(f"invalid search dimension {key}")
+        elif strategy == "variants":
+            if not p.get("variants") or "parameters" in p:
+                raise ValueError("variants phase needs nonempty variants only")
+            for patch in p["variants"]:
+                if not isinstance(patch, dict) or not patch or not all(_search_key(key) for key in patch):
+                    raise ValueError("each search variant must be a nonempty args/env patch")
+        else:
+            raise ValueError("phase strategy must be one_at_a_time, grid or variants")
+        candidate_plan(c, c["baseline"], p, c["search"]["max_cases_per_phase"])
     for key, limits in c["selection"].get("constraints", {}).items():
         if not limits or set(limits)-{"min", "max"}:
             raise ValueError(f"invalid constraint {key}")
@@ -183,23 +199,55 @@ def validate_case(c, candidate):
             raise ValueError(f"{key} is owned by service/model configuration")
 
 
+def _search_key(key):
+    return isinstance(key, str) and re.fullmatch(r"(args|env)\.[A-Za-z0-9_-]+", key)
+
+
 def candidates(incumbent, phase, limit):
-    dims = list(phase["parameters"].items())
-    theoretical = (math.prod(len(v) for _, v in dims) if phase["strategy"] == "grid"
-                   else sum(len(v) for _, v in dims))
+    strategy = phase["strategy"]
+    dims = list(phase.get("parameters", {}).items())
+    theoretical = (len(phase["variants"]) if strategy == "variants" else
+                   math.prod(len(v) for _, v in dims) if strategy == "grid" else
+                   sum(len(v) for _, v in dims))
     if theoretical + 1 > limit:
         raise ValueError(f"{phase['name']}: {theoretical+1} cases exceed cap {limit}")
-    patches = ([dict(zip([k for k, _ in dims], values))
+    patches = (phase["variants"] if strategy == "variants" else
+               [dict(zip([k for k, _ in dims], values))
                 for values in itertools.product(*(v for _, v in dims))]
-               if phase["strategy"] == "grid" else [{k: v} for k, values in dims for v in values])
-    result = [copy.deepcopy(incumbent)]  # Always remeasure the incumbent under this same workload.
-    seen = {digest(incumbent)}
+               if strategy == "grid" else [{k: v} for k, values in dims for v in values])
+    canonical = copy.deepcopy(incumbent)
+    for group in ("args", "env"):
+        canonical[group] = {key: value for key, value in canonical[group].items() if value is not None}
+    result = [canonical]  # Always remeasure the incumbent under this same workload.
+    seen = {digest(canonical)}
     for patch in patches:
-        item = copy.deepcopy(incumbent)
+        item = copy.deepcopy(canonical)
         for key, value in patch.items():
             group, flag = key.split(".", 1)
-            item[group][flag] = value
+            # null means "omit this CLI flag"; an absent key has the same runtime
+            # meaning, so canonicalize both forms before digest/deduplication.
+            if value is None:
+                item[group].pop(flag, None)
+            else:
+                item[group][flag] = value
         if digest(item) not in seen:
             seen.add(digest(item))
             result.append(item)
     return result
+
+
+def candidate_plan(c, incumbent, phase, limit):
+    """Return runnable candidates and auditable skips for a workload-aware search phase."""
+    planned, skipped = [], []
+    for candidate in candidates(incumbent, phase, limit):
+        try:
+            validate_case(c, candidate)
+        except ValueError as exc:
+            if not phase.get("skip_incompatible", False):
+                raise
+            skipped.append({"config": candidate, "reason": str(exc)})
+        else:
+            planned.append(candidate)
+    if not planned:
+        raise ValueError(f"{phase['name']}: no candidates compatible with this workload")
+    return planned, skipped

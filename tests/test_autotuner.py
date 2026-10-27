@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from inference_suite.config import candidates, digest, load, save, validate, validate_case
+from inference_suite.config import candidate_plan, candidates, digest, load, save, validate, validate_case
 from inference_suite.metrics import extract
 from inference_suite.runner import _run_phases, compare
 from inference_suite.selection import choose, evaluate
@@ -86,10 +86,47 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual([x["args"]["n"] for x in candidates(base, phase, 6)], [2, 1, 3])
         self.assertEqual(base["args"]["n"], 2)
 
+    def test_null_and_absent_flags_are_one_runtime_case(self):
+        base = {"args": {}, "env": {}}
+        phase = {"name": "phase1", "strategy": "one_at_a_time",
+                 "parameters": {"args.speculative-config": [None]}}
+        self.assertEqual(candidates(base, phase, 2), [base])
+
     def test_bounded_grid(self):
         phase = {"name": "phase1", "strategy": "grid", "parameters": {"args.n": list(range(10)), "env.A": list(range(10))}}
         with self.assertRaisesRegex(ValueError, "exceed"):
             candidates({"args": {}, "env": {}}, phase, 20)
+
+    def test_variants_replace_mutually_exclusive_graph_modes(self):
+        base = {"args": {"compilation-config": {"cudagraph_mode": "FULL_DECODE_ONLY"},
+                         "enforce-eager": None}, "env": {}}
+        phase = {"name": "phase1", "strategy": "variants", "variants": [
+            {"args.compilation-config": {"cudagraph_mode": "FULL_DECODE_ONLY"},
+             "args.enforce-eager": None},
+            {"args.compilation-config": None, "args.enforce-eager": None},
+            {"args.compilation-config": None, "args.enforce-eager": True},
+        ]}
+        got = candidates(base, phase, 4)
+        self.assertEqual(len(got), 3)
+        self.assertEqual(got[0]["args"]["compilation-config"]["cudagraph_mode"], "FULL_DECODE_ONLY")
+        self.assertNotIn("compilation-config", got[1]["args"])
+        self.assertNotIn("enforce-eager", got[1]["args"])
+        self.assertTrue(got[2]["args"]["enforce-eager"])
+
+    def test_comprehensive_preset_skips_workload_incompatible_cases(self):
+        c = validate(load(ROOT / "configs/experiments/qwen38-w8a8-comprehensive.json"))
+        phases = {phase["name"]: phase for phase in c["search"]["phases"]}
+
+        phase2, skipped2 = candidate_plan(c, c["baseline"], phases["phase2"],
+                                          c["search"]["max_cases_per_phase"])
+        self.assertTrue(all(item["args"]["max-num-seqs"] >= c["workload"]["concurrency"]
+                            for item in phase2))
+        self.assertTrue(any("max-num-seqs" in item["reason"] for item in skipped2))
+
+        phase3, skipped3 = candidate_plan(c, c["baseline"], phases["phase3"],
+                                          c["search"]["max_cases_per_phase"])
+        self.assertTrue(all(item["args"]["enable-prefix-caching"] is False for item in phase3))
+        self.assertTrue(any("prefix" in item["reason"] for item in skipped3))
 
     def test_flags_null_false_and_json(self):
         argv = flags({"speculative-config": None, "enable-prefix-caching": False, "compilation-config": {"mode": "A"}})

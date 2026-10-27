@@ -8,7 +8,7 @@ import os
 import shlex
 from pathlib import Path
 
-from .config import candidates, digest, save, validate_case
+from .config import candidate_plan, digest, save, validate_case
 from .selection import choose, evaluate, rank_key
 from .service import Service, checked, docker_argv, run_benchmark
 from .workload import freeze, identity, render
@@ -176,9 +176,18 @@ def _run_phases(root, c, phase, session, state):
         if plan_path.exists():
             planned = json.loads(plan_path.read_text())
         else:
-            planned = ([c["baseline"]] if name in ("phase0", "final-baseline") else [incumbent]
-                       if name == "final" else candidates(incumbent, configured[name], c["search"]["max_cases_per_phase"]))
+            if name in ("phase0", "final-baseline"):
+                planned, skipped = [c["baseline"]], []
+            elif name == "final":
+                planned, skipped = [incumbent], []
+            else:
+                planned, skipped = candidate_plan(c, incumbent, configured[name],
+                                                   c["search"]["max_cases_per_phase"])
             save(plan_path, planned)
+            if skipped:
+                save(session / (name + "_skipped.json"), skipped)
+                for item in skipped:
+                    log(f"SKIP {name}: {item['reason']}")
         phase_rows = []
         for index, candidate in enumerate(planned):
             row = case_run(root, c, candidate, profile, session, name, index)

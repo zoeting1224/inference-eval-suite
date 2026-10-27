@@ -11,7 +11,7 @@ import tempfile
 from pathlib import Path
 
 from . import accuracy, external_perf, long_context, reclassify, task
-from .config import candidates, load, validate, validate_case
+from .config import candidate_plan, load, validate
 from .reporting import refresh
 from .runner import compare
 from .service import checked, docker_argv
@@ -116,10 +116,13 @@ def show_plan(config: dict) -> None:
     print(f"Input target: {config['workload'].get('input_tokens')}")
     print("phase0: baseline")
     for phase in config["search"]["phases"]:
-        cases = candidates(config["baseline"], phase, config["search"]["max_cases_per_phase"])
-        for candidate in cases:
-            validate_case(config, candidate)
-        print(f"{phase['name']}: {len(cases)} cases; {phase.get('description', '')}")
+        cases, skipped = candidate_plan(config, config["baseline"], phase,
+                                        config["search"]["max_cases_per_phase"])
+        state = "enabled" if phase.get("enabled", True) else "disabled"
+        print(f"{phase['name']}: {len(cases)} runnable cases; {len(skipped)} skipped; "
+              f"{state}; {phase.get('description', '')}")
+        for item in skipped:
+            print(f"  skip: {item['reason']}")
     print("\nBaseline Docker command (not executed):")
     print(shlex.join(docker_argv(config, config["baseline"], "inferbench-PLAN", "PLAN")))
     print("\nData availability:")

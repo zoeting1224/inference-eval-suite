@@ -117,6 +117,12 @@
 
 修改 `configs/search/*.json`。每个 phase 都从上一 phase 的胜者开始，只改本 phase 参数。
 
+项目提供三档预设：
+
+- `general.json`：最小通用搜索；
+- `qwen-mtp.json`：精简 Qwen MTP 搜索；
+- `qwen-comprehensive.json`：MTP、Batch 网格、KV/Cache、Graph 和低优先级系统参数的全面搜索。
+
 ```json
 {
   "name": "phase1",
@@ -130,6 +136,9 @@
 - 固定配置测试不读取候选值，不会迭代。
 - `search --phase all` 才会依次跑 phase0 和所有启用 phase。
 - `max_cases_per_phase` 是保险上限，避免搜索空间意外爆炸。
+- `strategy=variants` 用于 Graph 这类互斥配置，每个对象是一套完整 patch。
+- `skip_incompatible=true` 会跳过不符合 workload 并发、上下文长度或 cache policy 的候选；`plan` 显示原因，正式运行保存 `phaseN_skipped.json`。
+- `enabled=false` 的低优先级 phase 不进入 `all`，但仍可用 `--phase phase5` 单独运行。
 
 ## 7. SLO 和排名
 
