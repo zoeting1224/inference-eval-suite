@@ -216,11 +216,102 @@ inference_eval_suite/
 
 ### 3.5 改搜索空间与 SLO
 
-在 `configs/search/*.json` 中配置候选值，例如：
+搜索空间不只是若干候选数字，还定义了调参顺序、组合方式以及上一阶段最优配置如何传给下一阶段。推荐按收益优先级分阶段搜索，避免一次性做全部参数的全排列。
+
+完整的 Qwen/vLLM 搜索设计如下：
+
+| 阶段 | 优先级 | 参数 | 推荐候选 | 组合方式 |
+|---|---:|---|---|---|
+| `phase0` | 基线 | 原始 `baseline` | 1 个基线 | 固定配置 |
+| `phase1` | 高 | MTP speculative tokens | 关闭 / 1 / 2 / 3 / 4 | 单参数扫描 |
+| `phase2` | 高 | `max-num-seqs` × `max-num-batched-tokens` | 16 / 32 / 64 × 16384 / 32768 | 小型网格 |
+| `phase3` | 中 | `gpu-memory-utilization` | 0.90 / 0.95 | 单参数扫描 |
+| `phase3` | 中 | Prefix Cache | on / off | 单参数扫描 |
+| `phase3` | 中 | `max-model-len` | 131072 / 262144 | 单参数扫描 |
+| `phase4` | 中 | Graph 模式 | `FULL_DECODE_ONLY` / 默认 / eager | 单参数扫描 |
+| `phase5` | 低 | HCCL、OMP、CPU binding | 256/512/1024；1/2/4/8；on/off | 最后手动精调 |
+
+搜索阶段按顺序继承 incumbent：`phase1` 选出的最佳 MTP 会成为 `phase2` 的起点，随后继续搜索 Batch、显存、Graph 和系统参数。不要把所有维度直接做笛卡尔积，否则 case 数量会迅速失控。
+
+在新版项目中，上述设计应写入 `configs/search/*.json`。下面给出完整结构示例；MTP 的 `method` 必须按模型和 vLLM 后端调整：
 
 ```json
-{"args.max-num-batched-tokens": [8192, 16384, 32768]}
+{
+  "search": {
+    "max_cases_per_phase": 12,
+    "phases": [
+      {
+        "name": "phase1",
+        "description": "Qwen MTP",
+        "strategy": "one_at_a_time",
+        "parameters": {
+          "args.speculative-config": [
+            null,
+            {"method": "qwen3_5_mtp", "num_speculative_tokens": 1, "enforce_eager": true},
+            {"method": "qwen3_5_mtp", "num_speculative_tokens": 2, "enforce_eager": true},
+            {"method": "qwen3_5_mtp", "num_speculative_tokens": 3, "enforce_eager": true},
+            {"method": "qwen3_5_mtp", "num_speculative_tokens": 4, "enforce_eager": true}
+          ]
+        }
+      },
+      {
+        "name": "phase2",
+        "description": "Batch scheduler",
+        "strategy": "grid",
+        "parameters": {
+          "args.max-num-seqs": [16, 32, 64],
+          "args.max-num-batched-tokens": [16384, 32768]
+        }
+      },
+      {
+        "name": "phase3",
+        "description": "KV cache and context budget",
+        "strategy": "one_at_a_time",
+        "parameters": {
+          "args.gpu-memory-utilization": [0.9, 0.95],
+          "args.enable-prefix-caching": [true, false],
+          "args.max-model-len": [131072, 262144]
+        }
+      },
+      {
+        "name": "phase4",
+        "description": "Graph mode",
+        "strategy": "one_at_a_time",
+        "parameters": {
+          "args.compilation-config": [
+            {"cudagraph_mode": "FULL_DECODE_ONLY"},
+            null
+          ]
+        }
+      },
+      {
+        "name": "phase5",
+        "description": "Low-priority communication and CPU tuning",
+        "strategy": "one_at_a_time",
+        "enabled": false,
+        "parameters": {
+          "env.HCCL_BUFFSIZE": ["256", "512", "1024"],
+          "env.OMP_NUM_THREADS": ["1", "2", "4", "8"],
+          "args.additional-config": [
+            {"enable_cpu_binding": true},
+            {"enable_cpu_binding": false}
+          ]
+        }
+      }
+    ]
+  }
+}
 ```
+
+这是一份搜索设计模板，不是对所有 workload 都可原样运行的固定配置。引用前必须按实验约束裁剪：
+
+- `max-num-seqs` 不能小于 `workload.concurrency`；例如并发 32 时必须删除候选 16。
+- `max-model-len` 必须覆盖模板后的输入 token 与输出 token 之和；2K 吞吐测试通常不应保留 131K/262K。
+- `cache_policy=cold` 时必须固定 `enable-prefix-caching=false`；只有专门比较重复前缀收益时才使用 on/off。
+- `phase5` 收益通常较低，默认 `enabled=false`，在高收益阶段稳定后再单独启用。
+- `Graph=eager` 在不同 vLLM 版本中的参数表达不同，应先用 `plan` 检查实际启动命令。
+
+旧项目中的全面搜索并非只依赖 `search_space.env`。该文件只保存候选数组；`tune.sh` 负责 phase 顺序、`phase2` 网格组合、最佳配置继承、并发调整和 `phase5` 手动执行，同时还依赖 `base.env`、`lib/vllm.sh`、`lib/aisbench.sh` 与汇总脚本。新版项目应使用 JSON 搜索配置，不要直接把旧 `.env` 当作 `inferbench.py` 的输入。
 
 在 `configs/selection/*.json` 中配置硬门槛和排序目标，例如：
 
@@ -270,6 +361,20 @@ python3 inferbench.py perf \
 
 ## 6. 功能二：自动寻优
 
+自动寻优推荐使用上一节的完整分阶段设计，而不是只搜索 Batch Tokens 和显存比例。默认顺序为：
+
+```text
+phase0 baseline
+  → phase1 MTP
+  → phase2 max-num-seqs × max-num-batched-tokens
+  → phase3 KV Cache / Prefix Cache / max-model-len
+  → phase4 Graph
+  → phase5 HCCL / OMP / CPU binding（低优先级，默认关闭）
+  → final-baseline 与 final 公平复测
+```
+
+每个 phase 只修改本组参数，其余参数继承当前最佳配置。`phase2` 采用小型网格；其他阶段优先使用 `one_at_a_time`，以控制总 case 数。
+
 先执行 `plan` 和 `doctor`，确认无误后放到 tmux 后台：
 
 ```bash
@@ -287,6 +392,8 @@ python3 inferbench.py task start --name w4a8-search -- \
 ```
 
 同一实验身份和 phase 已完整完成时，重复执行会返回已有结果，不浪费时间。确实需要重新测试时加 `--new-run`。
+
+运行前重点检查 `plan` 输出：实际 workload 并发、每个 phase 的 case 数、MTP 方法、`max-model-len`、Prefix Cache 策略以及 Docker/NPU 映射。低收益 `phase5` 不建议第一次执行 `all` 时开启。
 
 ### 最终 baseline/best 公平对比
 
